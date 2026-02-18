@@ -1,98 +1,60 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
 from typing import Optional
 
-import ollama
+from pydantic import ValidationError
 
-from core.conversation import ConversationManager
-
-
-class OllamaConnectionError(RuntimeError):
-    """Error al conectar con el servicio local de Ollama."""
+from core.api_client import APIClient
+from models.linkedin_post import LinkedinPost
 
 
-class ModelNotAvailableError(RuntimeError):
-    """El modelo requerido no está disponible en Ollama."""
+class Chatbot:
+    def __init__(self, model: str = "gpt-4o-2024-08-06") -> None:
+        self.api = APIClient(model=model)
 
+    def ask(self, prompt: str, default: Optional[str] = None) -> str:
+        value = input(prompt).strip()
+        if not value and default is not None:
+            return default
+        return value
 
-@dataclass
-class ChatbotConfig:
-    model: str = "gemma3:1b"
-    temperature: float = 0.3
-    num_predict: int = 400  # límite aproximado de tokens de salida
+    def run_once(self) -> Optional[LinkedinPost]:
+        print("\n=== Generador de posts para LinkedIn (Structured Output) ===")
 
+        topic = self.ask("Tema del post: ")
+        while not topic:
+            print("El tema no puede estar vacío.")
+            topic = self.ask("Tema del post: ")
 
-class ExpertChatbot:
-    """
-    Lógica principal del chatbot:
-    - Envía mensajes a Ollama (offline, servicio local).
-    - Usa el ConversationManager para mantener historial por experto.
-    - Maneja errores de conexión y de modelo no disponible.
-    """
+        category = self.ask(
+            "Categoría [programacion/marketing/legal] (default: programacion): ",
+            default="programacion",
+        ).lower()
 
-    def __init__(self, conversation: ConversationManager, config: Optional[ChatbotConfig] = None) -> None:
-        self.conversation = conversation
-        self.config = config or ChatbotConfig()
-
-    # -----------------------------
-    # Checks (conexión y modelo)
-    # -----------------------------
-    def health_check(self) -> None:
-        """
-        Verifica que Ollama está accesible y que el modelo existe.
-        Lanza excepciones claras si algo falla.
-        """
-        try:
-            models = ollama.list()
-        except Exception as e:
-            raise OllamaConnectionError(
-                "No se pudo conectar con Ollama. "
-                "Asegúrate de que el servicio esté instalado y ejecutándose."
-            ) from e
-
-        available = {m.get("model") for m in models.get("models", [])}
-        if self.config.model not in available:
-            raise ModelNotAvailableError(
-                f"El modelo '{self.config.model}' no está disponible en Ollama.\n"
-                f"Solución: ejecuta `ollama pull {self.config.model}` y vuelve a intentar."
-            )
-
-    # -----------------------------
-    # Chat
-    # -----------------------------
-    def ask(self, user_text: str) -> str:
-        """
-        Envía el mensaje del usuario al modelo con el contexto del experto activo.
-        Devuelve la respuesta del asistente (string).
-        """
-        # Guardar input del usuario en el historial del experto activo
-        self.conversation.add_user_message(user_text)
-
-        # Construir mensajes (system + historial) para el modelo
-        messages = self.conversation.build_messages_for_model()
+        if category not in ("programacion", "marketing", "legal"):
+            print("Categoría inválida. Usando 'programacion'.")
+            category = "programacion"
 
         try:
-            resp = ollama.chat(
-                model=self.config.model,
-                messages=messages,
-                options={
-                    "temperature": self.config.temperature,
-                    "num_predict": self.config.num_predict,
-                },
-            )
+            post = self.api.generate_linkedin_post(topic=topic, category=category)
+            return post
+
+        except ValidationError as e:
+            # Error de Pydantic (estructura/tipos no válidos)
+            print("\n❌ Error de validación (Pydantic). La salida no cumple el esquema.")
+            print(str(e))
+            return None
+
         except Exception as e:
-            # Si falla aquí, normalmente es servicio caído o modelo no accesible
-            raise OllamaConnectionError(
-                "Error llamando a Ollama. Revisa que el servicio esté activo y el modelo descargado."
-            ) from e
+            # Errores de API, refusal u otros problemas
+            print("\n❌ Error al generar el post.")
+            print(f"Detalle: {e}")
+            return None
 
-        # Extraer texto
-        assistant_text = (resp.get("message") or {}).get("content", "").strip()
-        if not assistant_text:
-            assistant_text = "No he podido generar una respuesta. Intenta reformular la pregunta."
-
-        # Guardar respuesta en historial
-        self.conversation.add_assistant_message(assistant_text)
-
-        return assistant_text
+    @staticmethod
+    def pretty_print(post: LinkedinPost) -> None:
+        print("\n--- RESULTADO ---")
+        print(f"\nTítulo:\n{post.title}")
+        print(f"\nContenido:\n{post.content}")
+        print("\nHashtags:")
+        print(" ".join(post.hashtags))
+        print(f"\nCategoría: {post.category}")
+        print("-----------------\n")

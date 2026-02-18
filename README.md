@@ -1,8 +1,6 @@
-# Chatbot con fallback (OpenAI / Anthropic / Gemini)
+LinkedIn Post Generator
 
-## Requisitos
-- Python 3.10+
-
-## Instalación
-```bash
-pip install -r requirements.txt
+Aplicación en Python que genera posts estructurados para LinkedIn.
+Utiliza OpenAI + Structured Outputs.
+Validación y tipado con Pydantic.
+Configuración segura mediante archivo .env.
